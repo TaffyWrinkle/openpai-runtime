@@ -27,6 +27,7 @@ import re
 import sys
 
 import requests
+from requests import HTTPError
 import yaml
 
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -174,12 +175,14 @@ class ImageChecker():  #pylint: disable=too-few-public-methods
             LOGGER.warning(
                 "Registry %s not support v2 api, ignore image check",
                 self._registry_uri)
-            return
+            # TODO: This is not correct, maybe caused by network error
+            raise NotImplementedError(
+                "Image check for v1 registry not supported")
         resp = requests.head(attempt_url, headers=self._basic_auth_headers)
         if not resp.ok and resp.status_code != http.HTTPStatus.UNAUTHORIZED:
             LOGGER.error("Failed to login registry, resp code is %d",
                          resp.status_code)
-            raise RuntimeError("Failed to login registry")
+            resp.raise_for_status()
         headers = resp.headers
         if "Www-Authenticate" in headers:
             challenge = _parse_auth_challenge(headers["Www-Authenticate"])
@@ -221,6 +224,16 @@ class ImageChecker():  #pylint: disable=too-few-public-methods
                                                 **image_info)
         try:
             self._login_v2_registry(url)
+        except NotImplementedError:
+            LOGGER.warning("Function not implement, treat as succeed")
+            return True
+        except HTTPError as err:
+            if err.response.status_code == http.HTTPStatus.TOO_MANY_REQUESTS:
+                LOGGER.warning("Too many requests, treat as ok")
+                return True
+            LOGGER.error("Resp returned with code %s",
+                         err.response.status_code)
+            return False
         except RuntimeError:
             LOGGER.error("login failed, username or password incorrect",
                          exc_info=True)
